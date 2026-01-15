@@ -617,9 +617,9 @@ async function saveAnnotation() {
         Set Move Directory
       </button>
 
-      <button onclick={() => console.log("Current lastMoved:", lastMoved)}>
-        Check lastMoved
-        </button>
+      <!-- <button onclick={() => console.log("Current lastMoved:", lastMoved)}> -->
+      <!--   Check lastMoved -->
+      <!--   </button> -->
     </div>
     
     {#if images.length > 0}
@@ -738,8 +738,9 @@ async function saveAnnotation() {
         <button onclick={zoomIn} disabled={!currentImagePath} title="Zoom In (+)">+</button>
         <button onclick={resetZoom} disabled={!currentImagePath} title="Reset Zoom (0)">⟲</button>
       </div>
-      <button onclick={undoMove} class="" disabled={!currentImagePath}>
-        {saveStatus || 'UNDO'}
+
+      <button onclick={undoMove} class="undo-btn" disabled={!currentImagePath}>
+        {lastMoved ? 'UNDO' : 'No last moved!'}
       </button>
 
       <button onclick={saveAnnotation} class="save-btn" disabled={!currentImagePath}>
@@ -1063,6 +1064,9 @@ async function saveAnnotation() {
   
   .save-btn {
     background: #2ecc71;
+  }
+    .undo-btn {
+    background: #a2a2a;
   }
   
   .save-btn:hover:not(:disabled) {
