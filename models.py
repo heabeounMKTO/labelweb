@@ -4,7 +4,7 @@ from typing import List, Optional
 class Shape(BaseModel):
     label: str
     points: List[List[float]]
-    group_id: Optional[int] = None
+    group_id: Optional[str] = None
     shape_type: str = "rectangle"
     flags: dict = {}
 

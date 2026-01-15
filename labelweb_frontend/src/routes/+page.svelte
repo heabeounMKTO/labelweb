@@ -358,10 +358,20 @@
       if (showLabels) {
         ctx.fillStyle = color;
         ctx.font = '14px Arial';
-        const textWidth = ctx.measureText(shape.label).width;
+        
+        // Build label text with confidence if available
+        let labelText = shape.label;
+        if (shape.group_id) {
+          const confidence = parseFloat(shape.group_id);
+          if (!isNaN(confidence)) {
+            labelText += ` ${(confidence * 100).toFixed(1)}%`;
+          }
+        }
+        
+        const textWidth = ctx.measureText(labelText).width;
         ctx.fillRect(x, y - 20, textWidth + 8, 18);
         ctx.fillStyle = '#000';
-        ctx.fillText(shape.label, x + 4, y - 6);
+        ctx.fillText(labelText, x + 4, y - 6);
       }
     });
     
@@ -586,10 +596,31 @@
             class:selected={i === selectedShapeIndex}
             onclick={() => { selectedShapeIndex = i; redraw(); }}
           >
-            {shape.label}
+            <div class="shape-label">{shape.label}</div>
+            {#if shape.group_id}
+              <div class="shape-confidence">
+                {(parseFloat(shape.group_id) * 100).toFixed(1)}%
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
+      
+      {#if shapes.length > 0}
+        <div class="shape-stats">
+          <h4>Statistics</h4>
+          {#each Object.entries(shapes.reduce((acc, s) => {
+            acc[s.label] = (acc[s.label] || 0) + 1;
+            return acc;
+          }, {})) as [label, count]}
+            <div class="stat-row">
+              <span class="stat-color" style:background-color={getLabelColor(label)}></span>
+              <span class="stat-label">{label}</span>
+              <span class="stat-count">{count}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
     
     <div class="section">
@@ -819,6 +850,9 @@
     border-radius: 4px;
     cursor: pointer;
     transition: background 0.2s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
   
   .shape-item:hover {
@@ -828,6 +862,67 @@
   .shape-item.selected {
     background: #4a9eff;
     color: #000;
+  }
+  
+  .shape-label {
+    flex: 1;
+  }
+  
+  .shape-confidence {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    color: #4aff9e;
+  }
+  
+  .shape-item.selected .shape-confidence {
+    background: rgba(0, 0, 0, 0.2);
+    color: #000;
+  }
+  
+  .shape-stats {
+    margin-top: 15px;
+    padding: 10px;
+    background: #1a1a1a;
+    border-radius: 4px;
+  }
+  
+  .shape-stats h4 {
+    margin: 0 0 10px 0;
+    font-size: 12px;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  
+  .stat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 13px;
+  }
+  
+  .stat-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+  }
+  
+  .stat-label {
+    flex: 1;
+    color: #ccc;
+  }
+  
+  .stat-count {
+    background: #2a2a2a;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-weight: bold;
+    color: #4a9eff;
+    font-size: 12px;
   }
   
   .hotkeys {

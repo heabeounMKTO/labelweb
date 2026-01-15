@@ -94,6 +94,7 @@ async def save_annotation(
     
     if not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="image not found!")
+    print("[DEBUG] shapes: ", annotation.shapes)
     image_data = image_to_base64(image_path)
     labelme_data = {
         "version": "5.0.1",
@@ -102,7 +103,8 @@ async def save_annotation(
             {
                 "label": shape.label,
                 "points": shape.points,
-                "group_id": shape.group_id,
+                "group_id": str(shape.group_id),
+            
                 "shape_type": shape.shape_type,
                 "flags": shape.flags
             }
@@ -119,4 +121,4 @@ async def save_annotation(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", reload=True, host="0.0.0.0", port=9100)
+    uvicorn.run("main:app", reload=True, host="0.0.0.0", log_level="debug", port=9100)
