@@ -14,7 +14,7 @@
   let imageElement = $state(null);
   let canvasElement = $state(null);
   let ctx = $state(null);
-  
+  let lastMoved = $state(null);
   let shapes = $state([]);
   let currentShape = $state(null);
   let isDrawing = $state(false);
@@ -396,32 +396,85 @@
     }
   }
   
-  async function saveAnnotation() {
-    if (!currentImagePath) return;
-      let move_dest_path = null 
-      if (moveDestination !== "") {
-        move_dest_path = moveDestination;
-      }
-    try {
-      saveStatus = 'Saving...';
-
-      await axios.post(`${API_URL}/annotation`, {
-        shapes: shapes,
-        imagePath: currentImagePath,
-        imageHeight: imageHeight,
-        imageWidth: imageWidth
-      }, {
-          params: { image_path: currentImagePath , dest_path: move_dest_path}
-      });
-      saveStatus = '✓ Saved';
-      setTimeout(() => saveStatus = '', 2000);
-    } catch (error) {
-      console.error('Failed to save annotation:', error);
-      saveStatus = '✗ Error';
-      setTimeout(() => saveStatus = '', 2000);
+async function undoMove() {
+    if (!lastMoved) {
+        console.log("No move to undo");
+        return;
     }
-    loadImagesFromDirectory()
-  }
+    
+    console.log("Undoing move:", lastMoved);
+    
+    try {
+        let origDirPath = lastMoved.original_img.split('/').slice(0, -1).join('/');
+        console.log("Moving back to:", origDirPath);
+        
+        // Use params instead of body
+        let _undo = await axios.post(`${API_URL}/move`, null, {
+            params: {
+                destination_path: origDirPath,
+                image_path: lastMoved.dest_img
+            }
+        });
+        
+        console.log("Undo successful:", _undo.data);
+        
+        const restoredPath = lastMoved.original_img;
+        lastMoved = null;
+        
+        await loadImagesFromDirectory();
+        currentImagePath = restoredPath;
+        
+    } catch (error) {
+        console.error("Undo failed:", error);
+        alert("Failed to undo move");
+    }
+}
+async function saveAnnotation() {
+    if (!currentImagePath) return;
+
+    let move_dest_path = null;
+    if (moveDestination !== "") {
+        move_dest_path = moveDestination;
+    }
+
+    try {
+        saveStatus = 'Saving...';
+
+        let _move = await axios.post(`${API_URL}/annotation`, {
+            shapes: shapes,
+            imagePath: currentImagePath,
+            imageHeight: imageHeight,
+            imageWidth: imageWidth
+        }, {
+            params: { image_path: currentImagePath, dest_path: move_dest_path }
+        });
+        
+        console.log("Save response:", _move.data);
+        
+        // Only set lastMoved if there was actually a move
+        if (_move.data?.move_data && move_dest_path) {
+            lastMoved = {
+                dest_img: _move.data.move_data.dest_img,
+                dest_json: _move.data.move_data.dest_json,
+                original_json: _move.data.move_data.orig_json,
+                original_img: _move.data.move_data.orig_img
+            };
+            console.log("lastMoved set to:", lastMoved);
+        } else {
+            console.log("No move performed, lastMoved unchanged");
+        }
+        
+        saveStatus = '✓ Saved';
+        setTimeout(() => saveStatus = '', 2000);
+        
+        await loadImagesFromDirectory();
+        
+    } catch (error) {
+        console.error('Failed to save annotation:', error);
+        saveStatus = '✗ Error';
+        setTimeout(() => saveStatus = '', 2000);
+    }
+}
   
   function nextImage() {
     if (currentIndex < images.length - 1) {
@@ -563,6 +616,10 @@
       <button onclick={setDestinationDirectory} class="load-btn">
         Set Move Directory
       </button>
+
+      <button onclick={() => console.log("Current lastMoved:", lastMoved)}>
+        Check lastMoved
+        </button>
     </div>
     
     {#if images.length > 0}
@@ -681,7 +738,10 @@
         <button onclick={zoomIn} disabled={!currentImagePath} title="Zoom In (+)">+</button>
         <button onclick={resetZoom} disabled={!currentImagePath} title="Reset Zoom (0)">⟲</button>
       </div>
-      
+      <button onclick={undoMove} class="" disabled={!currentImagePath}>
+        {saveStatus || 'UNDO'}
+      </button>
+
       <button onclick={saveAnnotation} class="save-btn" disabled={!currentImagePath}>
         {saveStatus || 'Save (Ctrl+S)'}
       </button>

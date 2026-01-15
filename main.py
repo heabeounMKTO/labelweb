@@ -120,16 +120,16 @@ async def save_annotation(
     if dest_path is not None:
         move_ok = move_checked(image_path, dest_path)
         if move_ok is None:
-            return {"status": "saved", "moved": False,"path": str(json_path)}
+            return {"status": "saved", "moved": False,"path": str(json_path), "move_data": move_ok}
         else:
-            return {"status": "saved", "moved": True,"path": str(json_path)}
+            return {"status": "saved", "moved": True,"path": str(json_path), "move_data": move_ok}
     return {"status": "saved", "path": str(json_path)}
 
 
 @app.post("/move")
 def move_checked(image_path: str, 
                  destination_path: str):
-    if os.path.exists(destination_path) and os.path.exists(image_path):
+    if os.path.exists(image_path) and os.path.exists(destination_path):
         image_file = os.path.basename(image_path)
         original_json = annotation_file_from_image_file(image_path)
         original_image = image_path
@@ -143,10 +143,14 @@ def move_checked(image_path: str,
         os.rename(original_image, destination_image)
         os.rename(original_json, destination_json)
         return {"status":"moved", 
+                "orig_img":original_image,
+                "orig_json":original_json,
                 "dest_img":destination_image,
-                "dest_json": destination_json} 
+                "dest_json": destination_json
+                } 
     else:
-        return None
+        return None 
+
 
 
 if __name__ == "__main__":
