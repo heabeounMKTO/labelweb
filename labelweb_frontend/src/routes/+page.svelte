@@ -8,6 +8,7 @@
   let moveDestination = $state('');
   let imageDirectory = $state('');
   let currentDirectory = $state(''); // Track current directory for cache clearing
+  let pathsLoaded = $state(false);
   let images = $state([]);
   let currentIndex = $state(0);
   let currentImagePath = $state(null);
@@ -60,11 +61,56 @@
     return index >= 0 ? labelColors[index % labelColors.length] : '#ff0000';
   }
   
+  // Load persisted paths from storage
+  async function loadPersistedPaths() {
+    try {
+      const imagePathResult = await window.storage.get('bbox-image-directory');
+      const movePathResult = await window.storage.get('bbox-move-destination');
+      if (imagePathResult?.value) {
+        imageDirectory = imagePathResult.value;
+        console.log('Loaded persisted image directory:', imageDirectory);
+      }
+      
+      if (movePathResult?.value) {
+        moveDestination = movePathResult.value;
+        console.log('Loaded persisted move destination:', moveDestination);
+      }
+      
+      pathsLoaded = true;
+    } catch (error) {
+      console.log('No persisted paths found or error loading:', error);
+      pathsLoaded = true;
+    }
+  }
+  
+  // Persist image directory to storage
+  async function persistImageDirectory() {
+    try {
+      await window.storage.set('bbox-image-directory', imageDirectory);
+      console.log('Persisted image directory:', imageDirectory);
+    } catch (error) {
+      console.error('Failed to persist image directory:', error);
+    }
+  }
+  
+  // Persist move destination to storage
+  async function persistMoveDestination() {
+    try {
+      await window.storage.set('bbox-move-destination', moveDestination);
+      console.log('Persisted move destination:', moveDestination);
+    } catch (error) {
+      console.error('Failed to persist move destination:', error);
+    }
+  }
+  
   async function loadImagesFromDirectory() {
     if (!imageDirectory.trim()) {
       alert('Please enter an image directory path');
       return;
     }
+    
+    // Persist the path
+    await persistImageDirectory();
     
     try {
       // Check if directory changed - if so, clear label cache
@@ -89,12 +135,17 @@
       alert('Failed to load images from directory. Check the path and try again.');
     }
   }
+  
   async function setDestinationDirectory() {
-    console.log("Destiantion set to", moveDestination) 
+    // Persist the path
+    await persistMoveDestination();
+    console.log("Destination set to", moveDestination);
   }
   
   onMount(() => {
     console.log('Component mounted');
+    // Load persisted paths
+    loadPersistedPaths();
     // Setup canvas after a small delay to ensure DOM is ready
     setTimeout(() => {
       setupCanvas();
@@ -616,10 +667,6 @@ async function saveAnnotation() {
       <button onclick={setDestinationDirectory} class="load-btn">
         Set Move Directory
       </button>
-
-      <!-- <button onclick={() => console.log("Current lastMoved:", lastMoved)}> -->
-      <!--   Check lastMoved -->
-      <!--   </button> -->
     </div>
     
     {#if images.length > 0}
