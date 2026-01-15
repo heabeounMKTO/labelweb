@@ -22,9 +22,9 @@ def image_to_base64(image_path: Path) -> str:
 
 def get_cached_thumbnail(image_path: Path, size=(800, 800)) -> Path:
     cache_key = hashlib.md5(str(image_path).encode()).hexdigest()
-    cache_path = CACHE_DIR / f"{cache_key}.jpg"
+    cache_path = f"{CACHE_DIR}/{cache_key}.jpg"
     
-    if not cache_path.exists():
+    if not os.path.exists(cache_path):
         with Image.open(image_path) as img:
             img.thumbnail(size, Image.Resampling.LANCZOS)
             if img.mode not in ('RGB', 'L'):
@@ -33,10 +33,9 @@ def get_cached_thumbnail(image_path: Path, size=(800, 800)) -> Path:
     
     return cache_path
 
+def annotation_file_from_image_file(image_path: str):
+    """
+    replace image extension with .json
+    """
+    return os.path.splitext(image_path)[0] + ".json"
 
-def get_annotation_path(image_path: str, image_dir: str) -> Path:
-    """Get annotation JSON path for an image"""
-    rel_path = Path(image_path)
-    json_path = image_dir / rel_path.with_suffix('.json')
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    return json_path
