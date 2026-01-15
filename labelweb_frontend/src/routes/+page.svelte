@@ -4,6 +4,8 @@
 
   const API_URL = 'http://localhost:9100';
   
+
+  let moveDestination = $state('');
   let imageDirectory = $state('');
   let currentDirectory = $state(''); // Track current directory for cache clearing
   let images = $state([]);
@@ -86,6 +88,9 @@
       console.error('Failed to load images:', error);
       alert('Failed to load images from directory. Check the path and try again.');
     }
+  }
+  async function setDestinationDirectory() {
+    console.log("Destiantion set to", moveDestination) 
   }
   
   onMount(() => {
@@ -393,16 +398,20 @@
   
   async function saveAnnotation() {
     if (!currentImagePath) return;
-    
+      let move_dest_path = null 
+      if (moveDestination !== "") {
+        move_dest_path = moveDestination;
+      }
     try {
       saveStatus = 'Saving...';
+
       await axios.post(`${API_URL}/annotation`, {
         shapes: shapes,
         imagePath: currentImagePath,
         imageHeight: imageHeight,
         imageWidth: imageWidth
       }, {
-        params: { image_path: currentImagePath }
+          params: { image_path: currentImagePath , dest_path: move_dest_path}
       });
       saveStatus = '✓ Saved';
       setTimeout(() => saveStatus = '', 2000);
@@ -411,6 +420,7 @@
       saveStatus = '✗ Error';
       setTimeout(() => saveStatus = '', 2000);
     }
+    loadImagesFromDirectory()
   }
   
   function nextImage() {
@@ -543,6 +553,15 @@
       />
       <button onclick={loadImagesFromDirectory} class="load-btn">
         Load Directory
+      </button>
+      <input 
+        type="text" 
+        bind:value={moveDestination}
+        placeholder="/path/to/move"
+        onkeydown={(e) => e.key === 'Enter' && setDestinationDirectory()}
+      />
+      <button onclick={setDestinationDirectory} class="load-btn">
+        Set Move Directory
       </button>
     </div>
     

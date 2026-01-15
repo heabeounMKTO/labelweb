@@ -88,7 +88,8 @@ def get_annotation_from_image(
 @app.post("/annotation")
 async def save_annotation(
         image_path: str,
-        annotation: Annotation
+        annotation: Annotation,
+        dest_path: Optional[str] = None
         ):
     json_path = annotation_file_from_image_file(image_path)
     
@@ -104,7 +105,6 @@ async def save_annotation(
                 "label": shape.label,
                 "points": shape.points,
                 "group_id": str(shape.group_id),
-            
                 "shape_type": shape.shape_type,
                 "flags": shape.flags
             }
@@ -117,7 +117,37 @@ async def save_annotation(
     }
     async with aiofiles.open(json_path, "w") as f:
         await f.write(json.dumps(labelme_data, indent=2))
+    if dest_path is not None:
+        move_ok = move_checked(image_path, dest_path)
+        if move_ok is None:
+            return {"status": "saved", "moved": False,"path": str(json_path)}
+        else:
+            return {"status": "saved", "moved": True,"path": str(json_path)}
     return {"status": "saved", "path": str(json_path)}
+
+
+@app.post("/move")
+def move_checked(image_path: str, 
+                 destination_path: str):
+    if os.path.exists(destination_path) and os.path.exists(image_path):
+        image_file = os.path.basename(image_path)
+        original_json = annotation_file_from_image_file(image_path)
+        original_image = image_path
+
+        split_img = os.path.splitext(image_file)
+        d_json_file = split_img[0] + ".json"
+
+        destination_json = f"{destination_path}/{d_json_file}"
+        destination_image = f"{destination_path}/{image_file}"
+        
+        os.rename(original_image, destination_image)
+        os.rename(original_json, destination_json)
+        return {"status":"moved", 
+                "dest_img":destination_image,
+                "dest_json": destination_json} 
+    else:
+        return None
+
 
 if __name__ == "__main__":
     import uvicorn
