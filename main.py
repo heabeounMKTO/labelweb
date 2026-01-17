@@ -97,6 +97,7 @@ async def save_annotation(
         raise HTTPException(status_code=404, detail="image not found!")
     print("[DEBUG] shapes: ", annotation.shapes)
     image_data = image_to_base64(image_path)
+    
     labelme_data = {
         "version": "5.0.1",
         "flags": {},
@@ -110,7 +111,7 @@ async def save_annotation(
             }
             for shape in annotation.shapes
         ],
-        "imagePath": annotation.imagePath,
+        "imagePath": os.path.basename(annotation.imagePath),
         "imageData": image_data,
         "imageHeight": annotation.imageHeight,
         "imageWidth": annotation.imageWidth

@@ -4,10 +4,9 @@
 
   const API_URL = 'http://localhost:9100';
   
-
   let moveDestination = $state('');
   let imageDirectory = $state('');
-  let currentDirectory = $state(''); // Track current directory for cache clearing
+  let currentDirectory = $state('');
   let pathsLoaded = $state(false);
   let images = $state([]);
   let currentIndex = $state(0);
@@ -22,13 +21,13 @@
   let startPoint = $state(null);
   let selectedShapeIndex = $state(-1);
   let showLabels = $state(true);
+  let darkMode = $state(true);
   
   let currentLabel = $state('');
-  let labels = $state([]); // Cached labels for current directory session
+  let labels = $state([]);
   let customLabel = $state('');
   let popupSearchQuery = $state('');
   
-  // Derived filtered labels for popup
   let filteredLabels = $derived(
     labels.filter(label => 
       label.toLowerCase().includes(popupSearchQuery.toLowerCase())
@@ -37,11 +36,10 @@
   
   let imageWidth = $state(0);
   let imageHeight = $state(0);
-  let scale = $state(1);
-  let offsetX = $state(0);
-  let offsetY = $state(0);
-  let minScale = $state(0.1);
-  let maxScale = $state(5);
+  
+  let canvasScale = $state(1);
+  let minCanvasScale = $state(0.1);
+  let maxCanvasScale = $state(3);
   
   let totalImages = $state(0);
   let saveStatus = $state('');
@@ -50,7 +48,6 @@
   let popupPosition = $state({ x: 0, y: 0 });
   let pendingShape = $state(null);
   
-  // Color palette for different labels
   const labelColors = [
     '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff',
     '#ff8800', '#88ff00', '#0088ff', '#ff0088', '#8800ff', '#00ff88'
@@ -61,11 +58,12 @@
     return index >= 0 ? labelColors[index % labelColors.length] : '#ff0000';
   }
   
-  // Load persisted paths from storage
   async function loadPersistedPaths() {
     try {
       const imagePathResult = await window.storage.get('bbox-image-directory');
       const movePathResult = await window.storage.get('bbox-move-destination');
+      const themeResult = await window.storage.get('bbox-theme');
+      
       if (imagePathResult?.value) {
         imageDirectory = imagePathResult.value;
         console.log('Loaded persisted image directory:', imageDirectory);
@@ -76,6 +74,11 @@
         console.log('Loaded persisted move destination:', moveDestination);
       }
       
+      if (themeResult?.value) {
+        darkMode = themeResult.value === 'dark';
+        console.log('Loaded persisted theme:', themeResult.value);
+      }
+      
       pathsLoaded = true;
     } catch (error) {
       console.log('No persisted paths found or error loading:', error);
@@ -83,7 +86,6 @@
     }
   }
   
-  // Persist image directory to storage
   async function persistImageDirectory() {
     try {
       await window.storage.set('bbox-image-directory', imageDirectory);
@@ -93,7 +95,6 @@
     }
   }
   
-  // Persist move destination to storage
   async function persistMoveDestination() {
     try {
       await window.storage.set('bbox-move-destination', moveDestination);
@@ -103,17 +104,25 @@
     }
   }
   
+  async function toggleTheme() {
+    darkMode = !darkMode;
+    try {
+      await window.storage.set('bbox-theme', darkMode ? 'dark' : 'light');
+      console.log('Persisted theme:', darkMode ? 'dark' : 'light');
+    } catch (error) {
+      console.error('Failed to persist theme:', error);
+    }
+  }
+  
   async function loadImagesFromDirectory() {
     if (!imageDirectory.trim()) {
       alert('Please enter an image directory path');
       return;
     }
     
-    // Persist the path
     await persistImageDirectory();
     
     try {
-      // Check if directory changed - if so, clear label cache
       if (currentDirectory !== imageDirectory) {
         console.log('New directory detected, clearing label cache');
         labels = [];
@@ -137,16 +146,13 @@
   }
   
   async function setDestinationDirectory() {
-    // Persist the path
     await persistMoveDestination();
     console.log("Destination set to", moveDestination);
   }
   
   onMount(() => {
     console.log('Component mounted');
-    // Load persisted paths
     loadPersistedPaths();
-    // Setup canvas after a small delay to ensure DOM is ready
     setTimeout(() => {
       setupCanvas();
     }, 100);
@@ -165,7 +171,6 @@
     
     console.log('Loading image:', currentImagePath);
     
-    // Load annotation first
     let loadedShapes = [];
     try {
       const response = await axios.get(`${API_URL}/annotation/load`, {
@@ -175,7 +180,6 @@
       if (response.data) {
         loadedShapes = response.data.shapes || [];
         
-        // Cache unique labels from loaded shapes (add to session cache if not exists)
         loadedShapes.forEach(shape => {
           if (shape.label && !labels.includes(shape.label)) {
             console.log('Adding new label to cache:', shape.label);
@@ -189,14 +193,12 @@
       console.error('Failed to load annotation:', error);
     }
     
-    // Load image and wait for it to complete
     const imageUrl = `${API_URL}/images/single?image_path=${encodeURIComponent(currentImagePath)}`;
     console.log('Loading image from:', imageUrl);
     
     const img = new Image();
     img.crossOrigin = "anonymous";
     
-    // Use a promise to ensure image loads before continuing
     await new Promise((resolve, reject) => {
       img.onload = () => {
         console.log('Image loaded successfully:', img.width, 'x', img.height);
@@ -213,10 +215,8 @@
       img.src = imageUrl;
     });
     
-    // Now set shapes after image is loaded
     shapes = loadedShapes;
     
-    // Wait a bit for DOM to update, then fit and draw
     await new Promise(resolve => setTimeout(resolve, 50));
     
     if (!canvasElement) {
@@ -224,7 +224,7 @@
       setupCanvas();
     }
     
-    fitImageToCanvas();
+    fitCanvasToImage();
     redraw();
   }
   
@@ -240,9 +240,20 @@
     canvasElement.addEventListener('mousedown', handleMouseDown);
     canvasElement.addEventListener('mousemove', handleMouseMove);
     canvasElement.addEventListener('mouseup', handleMouseUp);
+    canvasElement.addEventListener('wheel', handleWheel, { passive: false });
   }
   
-  function fitImageToCanvas() {
+  function handleWheel(e) {
+    e.preventDefault();
+    
+    if (e.deltaY < 0) {
+      zoomIn();
+    } else {
+      zoomOut();
+    }
+  }
+  
+  function fitCanvasToImage() {
     if (!imageElement || !canvasElement) return;
     
     const containerWidth = canvasElement.parentElement.clientWidth;
@@ -250,28 +261,34 @@
     
     const scaleX = containerWidth / imageWidth;
     const scaleY = containerHeight / imageHeight;
-    minScale = Math.min(scaleX, scaleY, 1);
-    scale = minScale;
+    minCanvasScale = Math.min(scaleX, scaleY, 1);
+    canvasScale = minCanvasScale;
     
-    canvasElement.width = imageWidth * scale;
-    canvasElement.height = imageHeight * scale;
+    updateCanvasSize();
+  }
+  
+  function updateCanvasSize() {
+    if (!imageElement || !canvasElement) return;
     
-    offsetX = 0;
-    offsetY = 0;
+    canvasElement.width = imageWidth * canvasScale;
+    canvasElement.height = imageHeight * canvasScale;
   }
   
   function zoomIn() {
-    scale = Math.min(scale * 1.2, maxScale);
+    canvasScale = Math.min(canvasScale * 1.2, maxCanvasScale);
+    updateCanvasSize();
     redraw();
   }
   
   function zoomOut() {
-    scale = Math.max(scale / 1.2, minScale);
+    canvasScale = Math.max(canvasScale / 1.2, minCanvasScale);
+    updateCanvasSize();
     redraw();
   }
   
   function resetZoom() {
-    fitImageToCanvas();
+    canvasScale = minCanvasScale;
+    updateCanvasSize();
     redraw();
   }
   
@@ -280,15 +297,14 @@
     const canvasX = x - rect.left;
     const canvasY = y - rect.top;
     return {
-      x: (canvasX - offsetX) / scale,
-      y: (canvasY - offsetY) / scale
+      x: canvasX / canvasScale,
+      y: canvasY / canvasScale
     };
   }
   
   function handleMouseDown(e) {
     const point = screenToImage(e.clientX, e.clientY);
     
-    // Check if clicking on existing shape
     selectedShapeIndex = -1;
     for (let i = shapes.length - 1; i >= 0; i--) {
       const shape = shapes[i];
@@ -305,7 +321,6 @@
       }
     }
     
-    // Start drawing new box
     isDrawing = true;
     startPoint = point;
     currentShape = {
@@ -331,12 +346,10 @@
     const point = screenToImage(e.clientX, e.clientY);
     currentShape.points[1] = [point.x, point.y];
     
-    // Only add if box has minimum size
     const width = Math.abs(currentShape.points[1][0] - currentShape.points[0][0]);
     const height = Math.abs(currentShape.points[1][1] - currentShape.points[0][1]);
     
     if (width > 5 && height > 5) {
-      // Show label selection popup
       const rect = canvasElement.getBoundingClientRect();
       popupPosition = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       pendingShape = currentShape;
@@ -353,7 +366,6 @@
       pendingShape.label = label;
       shapes = [...shapes, pendingShape];
       
-      // Cache label for this directory session if it doesn't exist
       if (!labels.includes(label)) {
         console.log('Caching new label for session:', label);
         labels = [...labels, label];
@@ -388,34 +400,29 @@
     
     ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
-    // Draw image
     try {
-      ctx.drawImage(imageElement, offsetX, offsetY, imageWidth * scale, imageHeight * scale);
-      console.log('Drew image at scale:', scale);
+      ctx.drawImage(imageElement, 0, 0, imageWidth * canvasScale, imageHeight * canvasScale);
+      console.log('Drew image at canvas scale:', canvasScale);
     } catch (e) {
       console.error('Error drawing image:', e);
     }
     
-    // Draw shapes with different colors
     shapes.forEach((shape, index) => {
       const [p1, p2] = shape.points;
-      const x = Math.min(p1[0], p2[0]) * scale + offsetX;
-      const y = Math.min(p1[1], p2[1]) * scale + offsetY;
-      const w = Math.abs(p2[0] - p1[0]) * scale;
-      const h = Math.abs(p2[1] - p1[1]) * scale;
+      const x = Math.min(p1[0], p2[0]) * canvasScale;
+      const y = Math.min(p1[1], p2[1]) * canvasScale;
+      const w = Math.abs(p2[0] - p1[0]) * canvasScale;
+      const h = Math.abs(p2[1] - p1[1]) * canvasScale;
       
-      // Draw box with label-specific color
       const color = getLabelColor(shape.label);
       ctx.strokeStyle = index === selectedShapeIndex ? '#ffffff' : color;
       ctx.lineWidth = index === selectedShapeIndex ? 3 : 2;
       ctx.strokeRect(x, y, w, h);
       
-      // Draw label with background
       if (showLabels) {
         ctx.fillStyle = color;
         ctx.font = '14px Arial';
         
-        // Build label text with confidence if available
         let labelText = shape.label;
         if (shape.group_id) {
           const confidence = parseFloat(shape.group_id);
@@ -431,13 +438,12 @@
       }
     });
     
-    // Draw current shape
     if (currentShape) {
       const [p1, p2] = currentShape.points;
-      const x = Math.min(p1[0], p2[0]) * scale + offsetX;
-      const y = Math.min(p1[1], p2[1]) * scale + offsetY;
-      const w = Math.abs(p2[0] - p1[0]) * scale;
-      const h = Math.abs(p2[1] - p1[1]) * scale;
+      const x = Math.min(p1[0], p2[0]) * canvasScale;
+      const y = Math.min(p1[1], p2[1]) * canvasScale;
+      const w = Math.abs(p2[0] - p1[0]) * canvasScale;
+      const h = Math.abs(p2[1] - p1[1]) * canvasScale;
       
       ctx.strokeStyle = '#ffff00';
       ctx.lineWidth = 2;
@@ -447,85 +453,84 @@
     }
   }
   
-async function undoMove() {
+  async function undoMove() {
     if (!lastMoved) {
-        console.log("No move to undo");
-        return;
+      console.log("No move to undo");
+      return;
     }
     
     console.log("Undoing move:", lastMoved);
     
     try {
-        let origDirPath = lastMoved.original_img.split('/').slice(0, -1).join('/');
-        console.log("Moving back to:", origDirPath);
-        
-        // Use params instead of body
-        let _undo = await axios.post(`${API_URL}/move`, null, {
-            params: {
-                destination_path: origDirPath,
-                image_path: lastMoved.dest_img
-            }
-        });
-        
-        console.log("Undo successful:", _undo.data);
-        
-        const restoredPath = lastMoved.original_img;
-        lastMoved = null;
-        
-        await loadImagesFromDirectory();
-        currentImagePath = restoredPath;
-        
+      let origDirPath = lastMoved.original_img.split('/').slice(0, -1).join('/');
+      console.log("Moving back to:", origDirPath);
+      
+      let _undo = await axios.post(`${API_URL}/move`, null, {
+        params: {
+          destination_path: origDirPath,
+          image_path: lastMoved.dest_img
+        }
+      });
+      
+      console.log("Undo successful:", _undo.data);
+      
+      const restoredPath = lastMoved.original_img;
+      lastMoved = null;
+      
+      await loadImagesFromDirectory();
+      currentImagePath = restoredPath;
+      
     } catch (error) {
-        console.error("Undo failed:", error);
-        alert("Failed to undo move");
+      console.error("Undo failed:", error);
+      alert("Failed to undo move");
     }
-}
-async function saveAnnotation() {
+  }
+
+  async function saveAnnotation() {
     if (!currentImagePath) return;
 
     let move_dest_path = null;
     if (moveDestination !== "") {
-        move_dest_path = moveDestination;
+      move_dest_path = moveDestination;
     }
 
     try {
-        saveStatus = 'Saving...';
+      saveStatus = 'Saving...';
 
-        let _move = await axios.post(`${API_URL}/annotation`, {
-            shapes: shapes,
-            imagePath: currentImagePath,
-            imageHeight: imageHeight,
-            imageWidth: imageWidth
-        }, {
-            params: { image_path: currentImagePath, dest_path: move_dest_path }
-        });
-        
-        console.log("Save response:", _move.data);
-        
-        // Only set lastMoved if there was actually a move
-        if (_move.data?.move_data && move_dest_path) {
-            lastMoved = {
-                dest_img: _move.data.move_data.dest_img,
-                dest_json: _move.data.move_data.dest_json,
-                original_json: _move.data.move_data.orig_json,
-                original_img: _move.data.move_data.orig_img
-            };
-            console.log("lastMoved set to:", lastMoved);
-        } else {
-            console.log("No move performed, lastMoved unchanged");
-        }
-        
-        saveStatus = '✓ Saved';
-        setTimeout(() => saveStatus = '', 2000);
-        
-        await loadImagesFromDirectory();
-        
+      let _move = await axios.post(`${API_URL}/annotation`, {
+        shapes: shapes,
+        imagePath: currentImagePath,
+        imageHeight: imageHeight,
+        imageWidth: imageWidth
+      }, {
+        params: { image_path: currentImagePath, dest_path: move_dest_path }
+      });
+      
+      console.log("Save response:", _move.data);
+      
+      if (_move.data?.move_data && move_dest_path) {
+        lastMoved = {
+          dest_img: _move.data.move_data.dest_img,
+          dest_json: _move.data.move_data.dest_json,
+          original_json: _move.data.move_data.orig_json,
+          original_img: _move.data.move_data.orig_img
+        };
+        console.log("lastMoved set to:", lastMoved);
+      } else {
+        console.log("No move performed, lastMoved unchanged");
+      }
+      
+      saveStatus = '✓ Saved';
+      setTimeout(() => saveStatus = '', 2000);
+      
+      await loadImagesFromDirectory();
+      
     } catch (error) {
-        console.error('Failed to save annotation:', error);
-        saveStatus = '✗ Error';
-        setTimeout(() => saveStatus = '', 2000);
+      console.error('Failed to save annotation:', error);
+      saveStatus = '✗ Error';
+      setTimeout(() => saveStatus = '', 2000);
     }
-}
+  }
   
   function nextImage() {
     if (currentIndex < images.length - 1) {
@@ -567,19 +572,21 @@ async function saveAnnotation() {
     }
   }
   
-  // Keyboard shortcuts - only when canvas is hovered
   function handleKeydown(e) {
-    // Only handle shortcuts when canvas is hovered or popup is open
+    // Prevent Ctrl+R refresh
+    if (e.ctrlKey && e.key === 'r') {
+      e.preventDefault();
+      return;
+    }
+    
     if (!isCanvasHovered && !showLabelPopup) return;
     
-    // Close popup with Escape
     if (showLabelPopup && e.key === 'Escape') {
       e.preventDefault();
       cancelLabelSelection();
       return;
     }
     
-    // Number keys for label selection in popup
     if (showLabelPopup && e.key >= '1' && e.key <= '9') {
       e.preventDefault();
       const index = parseInt(e.key) - 1;
@@ -589,14 +596,12 @@ async function saveAnnotation() {
       return;
     }
     
-    // Enter key to add new label in popup
     if (showLabelPopup && e.key === 'Enter') {
       e.preventDefault();
       addLabelFromPopup();
       return;
     }
     
-    // Prevent defaults for our shortcuts
     if (['d', 'a', 's', 'e', ' ', '+', '-', '0'].includes(e.key.toLowerCase()) || 
         (e.ctrlKey && ['s', 'd'].includes(e.key.toLowerCase()))) {
       e.preventDefault();
@@ -643,9 +648,14 @@ async function saveAnnotation() {
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="app">
+<div class="app" class:dark={darkMode} class:light={!darkMode}>
   <div class="sidebar">
-    <h1>Bbox Annotator</h1>
+    <div class="header">
+      <h1>Bbox Annotator</h1>
+      <button class="theme-toggle" onclick={toggleTheme} title="Toggle theme">
+        {darkMode ? '☀️' : '🌙'}
+      </button>
+    </div>
     
     <div class="section">
       <h3>Image Directory</h3>
@@ -756,7 +766,7 @@ async function saveAnnotation() {
         <div><kbd>Del</kbd> Delete</div>
         <div><kbd>Ctrl+D</kbd> Duplicate</div>
         <div><kbd>Space</kbd> Toggle labels</div>
-        <div><kbd>+/-</kbd> Zoom in/out</div>
+        <div><kbd>Scroll</kbd> Zoom in/out</div>
         <div><kbd>0</kbd> Reset zoom</div>
         <div><kbd>1-9</kbd> Quick label</div>
       </div>
@@ -766,7 +776,7 @@ async function saveAnnotation() {
   <div class="main">
     <div class="toolbar">
       <button onclick={prevImage} disabled={currentIndex === 0 || images.length === 0}>
-        ← Previous (A)
+        ← Previous
       </button>
       <span class="image-info">
         {#if currentImagePath}
@@ -776,29 +786,29 @@ async function saveAnnotation() {
         {/if}
       </span>
       <button onclick={nextImage} disabled={currentIndex === images.length - 1 || images.length === 0}>
-        Next (D) →
+        Next →
       </button>
       
       <div class="zoom-controls">
-        <button onclick={zoomOut} disabled={!currentImagePath} title="Zoom Out (-)">-</button>
-        <span class="zoom-level">{Math.round(scale * 100)}%</span>
-        <button onclick={zoomIn} disabled={!currentImagePath} title="Zoom In (+)">+</button>
-        <button onclick={resetZoom} disabled={!currentImagePath} title="Reset Zoom (0)">⟲</button>
+        <button onclick={zoomOut} disabled={!currentImagePath}>−</button>
+        <span class="zoom-level">{Math.round(canvasScale * 100)}%</span>
+        <button onclick={zoomIn} disabled={!currentImagePath}>+</button>
+        <button onclick={resetZoom} disabled={!currentImagePath}>⟲</button>
       </div>
 
-      <button onclick={undoMove} class="undo-btn" disabled={!currentImagePath}>
-        {lastMoved ? 'UNDO' : 'No last moved!'}
+      <button onclick={undoMove} class="undo-btn" disabled={!lastMoved}>
+        Undo Move
       </button>
 
       <button onclick={saveAnnotation} class="save-btn" disabled={!currentImagePath}>
-        {saveStatus || 'Save (Ctrl+S)'}
+        {saveStatus || 'Save'}
       </button>
     </div>
     
     <div class="canvas-container">
       {#if !currentImagePath}
         <div class="empty-state">
-          <p>👆 Enter a directory path and click "Load Directory" to start annotating</p>
+          <p>Enter a directory path and click "Load Directory" to start annotating</p>
         </div>
       {/if}
       <div class="canvas-wrapper">
@@ -855,7 +865,7 @@ async function saveAnnotation() {
             {/if}
             
             <div class="popup-footer">
-              <button onclick={cancelLabelSelection}>Cancel (Esc)</button>
+              <button onclick={cancelLabelSelection}>Cancel</button>
             </div>
           </div>
         {/if}
@@ -869,8 +879,6 @@ async function saveAnnotation() {
     margin: 0;
     padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background: #1a1a1a;
-    color: #fff;
   }
   
   .app {
@@ -879,79 +887,153 @@ async function saveAnnotation() {
     overflow: hidden;
   }
   
+  /* Dark mode colors */
+  .app.dark {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #1a1a1a;
+    --bg-tertiary: #2a2a2a;
+    --border-color: #333;
+    --text-primary: #fff;
+    --text-secondary: #999;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --success: #10b981;
+    --success-hover: #059669;
+    --danger: #ef4444;
+    --input-bg: #1a1a1a;
+  }
+  
+  /* Light mode colors */
+  .app.light {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f5;
+    --bg-tertiary: #e5e5e5;
+    --border-color: #d4d4d4;
+    --text-primary: #000;
+    --text-secondary: #666;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --success: #10b981;
+    --success-hover: #059669;
+    --danger: #ef4444;
+    --input-bg: #fff;
+  }
+  
+  .app {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+  
   .sidebar {
     width: 280px;
-    background: #2a2a2a;
+    background: var(--bg-secondary);
     padding: 20px;
     overflow-y: auto;
-    border-right: 1px solid #3a3a3a;
+    border-right: 1px solid var(--border-color);
+  }
+  
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
   }
   
   h1 {
-    margin: 0 0 20px 0;
+    margin: 0;
     font-size: 24px;
-    color: #4a9eff;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  
+  .theme-toggle {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    font-size: 18px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  
+  .theme-toggle:hover {
+    background: var(--border-color);
   }
   
   h3 {
     margin: 0 0 10px 0;
-    font-size: 14px;
-    color: #aaa;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
   }
   
   .stats {
-    background: #1a1a1a;
-    padding: 15px;
-    border-radius: 8px;
+    background: var(--bg-tertiary);
+    padding: 12px;
+    border-radius: 6px;
     margin-bottom: 20px;
+    border: 1px solid var(--border-color);
   }
   
   .stat-item {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  
+  .stat-item:last-child {
+    margin-bottom: 0;
   }
   
   .stat-label {
-    color: #999;
+    color: var(--text-secondary);
   }
   
   .stat-value {
-    color: #4a9eff;
-    font-weight: bold;
+    color: var(--accent);
+    font-weight: 600;
   }
   
   .section {
-    margin-bottom: 25px;
+    margin-bottom: 24px;
   }
   
   select, input {
     width: 100%;
-    padding: 8px;
-    background: #1a1a1a;
-    border: 1px solid #3a3a3a;
+    padding: 8px 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    color: #fff;
-    font-size: 14px;
+    color: var(--text-primary);
+    font-size: 13px;
     box-sizing: border-box;
+    transition: border-color 0.2s;
+  }
+  
+  select:focus, input:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   
   .load-btn {
     width: 100%;
-    margin-top: 10px;
-    background: #9b59b6;
+    margin-top: 8px;
+    background: var(--accent);
   }
   
-  .load-btn:hover {
-    background: #8e44ad;
+  .load-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
   
   .custom-label {
     display: flex;
-    gap: 5px;
-    margin-top: 10px;
+    gap: 6px;
+    margin-top: 8px;
   }
   
   .custom-label input {
@@ -959,36 +1041,38 @@ async function saveAnnotation() {
   }
   
   .custom-label button {
-    padding: 8px 12px;
+    padding: 8px 14px;
   }
   
   .shapes-list {
     max-height: 200px;
     overflow-y: auto;
-    background: #1a1a1a;
+    background: var(--bg-tertiary);
     border-radius: 4px;
-    padding: 5px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
   }
   
   .shape-item {
-    padding: 8px;
+    padding: 8px 10px;
     margin-bottom: 2px;
-    background: #2a2a2a;
+    background: var(--bg-secondary);
     border-radius: 4px;
     cursor: pointer;
     transition: background 0.2s;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    font-size: 13px;
   }
   
   .shape-item:hover {
-    background: #3a3a3a;
+    background: var(--border-color);
   }
   
   .shape-item.selected {
-    background: #4a9eff;
-    color: #000;
+    background: var(--accent);
+    color: #fff;
   }
   
   .shape-label {
@@ -996,32 +1080,34 @@ async function saveAnnotation() {
   }
   
   .shape-confidence {
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.2);
     padding: 2px 6px;
     border-radius: 3px;
     font-size: 11px;
-    font-weight: bold;
-    color: #4aff9e;
+    font-weight: 600;
+    color: var(--success);
   }
   
   .shape-item.selected .shape-confidence {
-    background: rgba(0, 0, 0, 0.2);
-    color: #000;
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
   }
   
   .shape-stats {
-    margin-top: 15px;
+    margin-top: 12px;
     padding: 10px;
-    background: #1a1a1a;
+    background: var(--bg-tertiary);
     border-radius: 4px;
+    border: 1px solid var(--border-color);
   }
   
   .shape-stats h4 {
-    margin: 0 0 10px 0;
-    font-size: 12px;
-    color: #aaa;
+    margin: 0 0 8px 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
   }
   
   .stat-row {
@@ -1040,15 +1126,15 @@ async function saveAnnotation() {
   
   .stat-label {
     flex: 1;
-    color: #ccc;
+    color: var(--text-primary);
   }
   
   .stat-count {
-    background: #2a2a2a;
+    background: var(--bg-secondary);
     padding: 2px 8px;
     border-radius: 3px;
-    font-weight: bold;
-    color: #4a9eff;
+    font-weight: 600;
+    color: var(--accent);
     font-size: 12px;
   }
   
@@ -1057,13 +1143,18 @@ async function saveAnnotation() {
     line-height: 1.8;
   }
   
+  .hotkeys div {
+    color: var(--text-secondary);
+  }
+  
   kbd {
-    background: #1a1a1a;
+    background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: 3px;
-    border: 1px solid #3a3a3a;
+    border: 1px solid var(--border-color);
     font-family: monospace;
-    color: #4a9eff;
+    color: var(--accent);
+    font-size: 11px;
   }
   
   .main {
@@ -1073,51 +1164,58 @@ async function saveAnnotation() {
   }
   
   .toolbar {
-    background: #2a2a2a;
-    padding: 15px;
+    background: var(--bg-secondary);
+    padding: 12px 16px;
     display: flex;
     align-items: center;
     gap: 10px;
-    border-bottom: 1px solid #3a3a3a;
+    border-bottom: 1px solid var(--border-color);
   }
   
   .image-info {
     flex: 1;
     text-align: center;
-    font-size: 14px;
-    color: #aaa;
+    font-size: 13px;
+    color: var(--text-secondary);
   }
   
   button {
-    background: #4a9eff;
+    background: var(--accent);
     color: #fff;
     border: none;
-    padding: 10px 20px;
+    padding: 8px 16px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 500;
     transition: background 0.2s;
   }
   
   button:hover:not(:disabled) {
-    background: #3a8eef;
+    background: var(--accent-hover);
   }
   
   button:disabled {
-    background: #3a3a3a;
-    color: #666;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
     cursor: not-allowed;
   }
   
   .save-btn {
-    background: #2ecc71;
-  }
-    .undo-btn {
-    background: #a2a2a;
+    background: var(--success);
   }
   
   .save-btn:hover:not(:disabled) {
-    background: #27ae60;
+    background: var(--success-hover);
+  }
+  
+  .undo-btn {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+  
+  .undo-btn:not(:disabled):hover {
+    background: var(--border-color);
   }
   
   .canvas-container {
@@ -1125,7 +1223,7 @@ async function saveAnnotation() {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #1a1a1a;
+    background: var(--bg-primary);
     padding: 20px;
     overflow: hidden;
     position: relative;
@@ -1142,106 +1240,115 @@ async function saveAnnotation() {
   
   .empty-state {
     text-align: center;
-    color: #666;
-    font-size: 18px;
+    color: var(--text-secondary);
+    font-size: 14px;
     position: absolute;
   }
   
   canvas {
-    border: 1px solid #3a3a3a;
+    border: 1px solid var(--border-color);
     cursor: crosshair;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
   
   .zoom-controls {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     padding: 0 10px;
-    border-left: 1px solid #3a3a3a;
-    border-right: 1px solid #3a3a3a;
+    border-left: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+  }
+  
+  .zoom-controls button {
+    width: 32px;
+    padding: 8px;
   }
   
   .zoom-level {
     min-width: 50px;
     text-align: center;
-    color: #aaa;
-    font-size: 13px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
   }
   
   .label-popup {
     position: absolute;
-    background: #2a2a2a;
-    border: 2px solid #4a9eff;
-    border-radius: 8px;
+    background: var(--bg-secondary);
+    border: 2px solid var(--accent);
+    border-radius: 6px;
     padding: 0;
     min-width: 250px;
     max-width: 350px;
     max-height: 500px;
     overflow-y: auto;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
     z-index: 1000;
     transform: translate(-50%, 10px);
   }
   
   .popup-header {
-    background: #4a9eff;
+    background: var(--accent);
     color: #fff;
     padding: 10px;
-    font-weight: bold;
+    font-weight: 600;
     text-align: center;
-    border-radius: 6px 6px 0 0;
+    font-size: 13px;
+    border-radius: 4px 4px 0 0;
   }
   
   .popup-search {
     padding: 10px;
-    border-bottom: 1px solid #3a3a3a;
+    border-bottom: 1px solid var(--border-color);
   }
   
   .popup-search input {
     width: 100%;
     padding: 8px;
-    background: #1a1a1a;
-    border: 1px solid #3a3a3a;
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    color: #fff;
-    font-size: 14px;
+    color: var(--text-primary);
+    font-size: 13px;
   }
   
   .popup-search input:focus {
     outline: none;
-    border-color: #4a9eff;
+    border-color: var(--accent);
   }
   
   .label-option {
-    padding: 10px 15px;
+    padding: 10px 12px;
     cursor: pointer;
     transition: background 0.2s;
     display: flex;
     align-items: center;
     gap: 10px;
+    font-size: 13px;
   }
   
   .label-option:hover {
-    background: #3a3a3a;
+    background: var(--bg-tertiary);
   }
   
   .label-option.new-label {
-    background: #1a3a1a;
-    color: #4aff9e;
-    border-left: 4px solid #4aff9e !important;
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+    border-left: 4px solid var(--success) !important;
   }
   
   .label-option.new-label:hover {
-    background: #2a4a2a;
+    background: rgba(16, 185, 129, 0.2);
   }
   
   .label-number {
-    background: #1a1a1a;
-    color: #4a9eff;
+    background: var(--bg-tertiary);
+    color: var(--accent);
     padding: 2px 8px;
     border-radius: 3px;
-    font-size: 12px;
-    font-weight: bold;
+    font-size: 11px;
+    font-weight: 600;
     min-width: 20px;
     text-align: center;
   }
@@ -1249,32 +1356,35 @@ async function saveAnnotation() {
   .no-labels-popup {
     padding: 20px;
     text-align: center;
-    color: #666;
+    color: var(--text-secondary);
     font-style: italic;
+    font-size: 13px;
   }
   
   .no-labels {
     padding: 10px;
     text-align: center;
-    color: #666;
-    font-size: 13px;
+    color: var(--text-secondary);
+    font-size: 12px;
     font-style: italic;
-    background: #1a1a1a;
+    background: var(--bg-tertiary);
     border-radius: 4px;
+    border: 1px solid var(--border-color);
   }
   
   .popup-footer {
     padding: 10px;
-    border-top: 1px solid #3a3a3a;
+    border-top: 1px solid var(--border-color);
     text-align: center;
   }
   
   .popup-footer button {
     width: 100%;
-    background: #555;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
   }
   
   .popup-footer button:hover {
-    background: #666;
+    background: var(--border-color);
   }
 </style>
