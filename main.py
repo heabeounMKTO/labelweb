@@ -22,9 +22,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.get("/labels/all")
+def get_all_labels(image_path: str = Query("", description="Absolute path to directory")):
+    """
+    Scan all annotation JSON files in a directory and return the union of all labels found.
+    """
+    path = Path(image_path).resolve()
+    if not path.exists() or not path.is_dir():
+        raise HTTPException(status_code=404, detail="Directory not found")
 
+    labels: set[str] = set()
 
+    for json_file in path.glob("*.json"):
+        try:
+            with open(json_file, "r") as f:
+                data = json.load(f)
+            for shape in data.get("shapes", []):
+                label = shape.get("label", "").strip()
+                if label:
+                    labels.add(label)
+        except Exception:
+            continue  # skip malformed files silently
 
+    return {"labels": sorted(labels), "total": len(labels)}
 
 @app.get("/images/all")
 def list_images(skip: int = 0, 
