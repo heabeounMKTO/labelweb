@@ -237,6 +237,12 @@
 
     shapes = loaded;
     await tick();
+    // Retry fitCanvasToImage until container has real dimensions
+    // (can be zero briefly during a reactive re-render)
+    let attempts = 0;
+    while ((!canvasContainer || canvasContainer.clientWidth === 0) && attempts++ < 10) {
+      await new Promise(r => setTimeout(r, 16));
+    }
     fitCanvasToImage(); redraw(); scrollThumbsToCenter();
   }
 
@@ -297,9 +303,10 @@
 
   // ── Mouse handlers ─────────────────────────────────────────────────────────
   function handleMouseDown(e: MouseEvent) {
+    if (!canvasElement || !imageElement) return;
     if (e.button === 1 || (e.button === 0 && e.altKey)) { isPanning=true; panStart={x:e.clientX-panOffset.x,y:e.clientY-panOffset.y}; return; }
     if (e.button !== 0) return;
-    const r=canvasElement!.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+    const r=canvasElement.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
     const imgPt = screenToImage(e.clientX, e.clientY);
 
     if (interactionMode === 'edit') {
@@ -315,14 +322,18 @@
       selectedShapeIndex=-1; editingLabelIndex=-1; redraw(); return;
     }
 
+    // Draw mode
     isDrawing=true;
     currentShape={ label:currentLabel, points:[[imgPt[0],imgPt[1]],[imgPt[0],imgPt[1]]], shape_type:'rectangle', flags:{}, group_id:null };
   }
 
   function handleMouseMove(e: MouseEvent) {
-    const r=canvasElement!.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+    if (!canvasElement) return;
+    const r=canvasElement.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+
     if (isPanning) { panOffset={x:e.clientX-panStart.x,y:e.clientY-panStart.y}; redraw(); return; }
 
+    // Edit mode: dragging a handle or body
     if (activeHandle && dragStartPt && dragOrigPts) {
       const pt=screenToImage(e.clientX,e.clientY), dx=pt[0]-dragStartPt[0], dy=pt[1]-dragStartPt[1];
       const [o1,o2]=dragOrigPts; let x1=o1[0],y1=o1[1],x2=o2[0],y2=o2[1];
@@ -336,20 +347,22 @@
         if (activeHandle==='tc'||activeHandle==='bc') { x1=o1[0];x2=o2[0]; }
       }
       shapes[selectedShapeIndex]={...shapes[selectedShapeIndex],points:[[x1,y1],[x2,y2]]};
-      if (canvasElement) canvasElement.style.cursor=CURSOR_MAP[activeHandle];
+      canvasElement.style.cursor=CURSOR_MAP[activeHandle];
       redraw(); return;
     }
 
-    if (interactionMode==='edit' && !activeHandle) {
+    // Edit mode: hover highlight (no active drag)
+    if (interactionMode==='edit') {
       let found=false;
       for (let i=shapes.length-1;i>=0;i--) {
         const h=hitHandle(sx,sy,shapes[i]);
-        if (h) { hoveredShapeIndex=i; hoveredHandle=h; if(canvasElement) canvasElement.style.cursor=CURSOR_MAP[h]; found=true; break; }
+        if (h) { hoveredShapeIndex=i; hoveredHandle=h; canvasElement.style.cursor=CURSOR_MAP[h]; found=true; break; }
       }
-      if (!found) { hoveredShapeIndex=-1; hoveredHandle=null; if(canvasElement) canvasElement.style.cursor='default'; }
+      if (!found) { hoveredShapeIndex=-1; hoveredHandle=null; canvasElement.style.cursor='default'; }
       redraw(); return;
     }
 
+    // Draw mode: update in-progress bbox
     if (isDrawing && currentShape) {
       const pt=screenToImage(e.clientX,e.clientY);
       currentShape={...currentShape,points:[currentShape.points[0],[pt[0],pt[1]]]};
@@ -358,18 +371,22 @@
   }
 
   function handleMouseUp(e: MouseEvent) {
+    if (!canvasElement) return;
+
     if (isPanning) { isPanning=false; return; }
+
     if (activeHandle) {
       const s=shapes[selectedShapeIndex];
       shapes[selectedShapeIndex]={...s,points:[[Math.min(s.points[0][0],s.points[1][0]),Math.min(s.points[0][1],s.points[1][1])],[Math.max(s.points[0][0],s.points[1][0]),Math.max(s.points[0][1],s.points[1][1])]]};
       activeHandle=null; dragStartPt=null; dragOrigPts=null; redraw(); return;
     }
+
     if (!isDrawing || !currentShape) return;
     const pt=screenToImage(e.clientX,e.clientY);
     const fs:Shape={...currentShape,points:[currentShape.points[0],[pt[0],pt[1]]]};
     const w=Math.abs(fs.points[1][0]-fs.points[0][0]), h=Math.abs(fs.points[1][1]-fs.points[0][1]);
     if (w>5&&h>5) {
-      const r=canvasElement!.getBoundingClientRect();
+      const r=canvasElement.getBoundingClientRect();
       popupPosition={x:e.clientX-r.left,y:e.clientY-r.top}; pendingShape=fs; showLabelPopup=true;
     }
     isDrawing=false; currentShape=null; redraw();
@@ -451,10 +468,34 @@
   async function saveAnnotation() {
     if (!currentImagePath) return; saveStatus='saving';
     try {
-      const res=await axios.post(`${API_URL}/annotation`,{shapes,imagePath:currentImagePath,imageHeight,imageWidth},{params:{image_path:currentImagePath,dest_path:moveDestination||null}});
-      if (res.data?.move_data&&moveDestination) lastMoved={dest_img:res.data.move_data.dest_img,dest_json:res.data.move_data.dest_json,original_json:res.data.move_data.orig_json,original_img:res.data.move_data.orig_img};
-      saveStatus='ok'; toast('Saved','ok'); setTimeout(()=>(saveStatus=''),2000);
-      await loadImagesFromDirectory(true);
+      const savedPath = currentImagePath;
+      const savedIndex = currentIndex;
+      const res=await axios.post(`${API_URL}/annotation`,{shapes,imagePath:savedPath,imageHeight,imageWidth},{params:{image_path:savedPath,dest_path:moveDestination||null}});
+      const moved = !!(res.data?.move_data && moveDestination);
+      if (moved) lastMoved={dest_img:res.data.move_data.dest_img,dest_json:res.data.move_data.dest_json,original_json:res.data.move_data.orig_json,original_img:res.data.move_data.orig_img};
+      saveStatus='ok'; toast(moved ? 'Saved & moved' : 'Saved', 'ok'); setTimeout(()=>(saveStatus=''),2000);
+
+      // Fetch fresh image list
+      const res2 = await axios.get(`${API_URL}/images/all`, { params: { image_path: imageDirectory, limit: 10000 } });
+      const freshImages: string[] = res2.data.images;
+      const freshTotal: number = res2.data.total;
+
+      if (freshImages.length === 0) {
+        images = []; totalImages = 0; currentImagePath = null; return;
+      }
+
+      if (moved) {
+        // Image was moved out — clamp to new list so we land on the next one
+        const nextIdx = Math.min(savedIndex, freshImages.length - 1);
+        images = freshImages; totalImages = freshTotal;
+        await tick();
+        await loadImage(nextIdx);
+      } else {
+        // No move — reload same image to refresh annotation state
+        images = freshImages; totalImages = freshTotal;
+        await tick();
+        await loadImage(savedIndex);
+      }
     } catch { saveStatus='err'; toast('Save failed','err'); setTimeout(()=>(saveStatus=''),2000); }
   }
 
